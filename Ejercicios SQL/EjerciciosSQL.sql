@@ -516,13 +516,13 @@ WHERE YEAR(F.fact_fecha) = 2011 AND P.prod_familia in (SELECT fami_id FROM Famil
 GROUP BY P.prod_codigo, P.prod_detalle
 ORDER BY 3 DESC
 
---30 imposible devolver el nombre
+--30 ✔
 SELECT J.empl_nombre, COUNT(DISTINCT E.empl_codigo) as cant_empl,
        SUM(F.fact_total) as monto_total, COUNT(DISTINCT F.fact_numero+F.fact_sucursal+F.fact_tipo) as cant_facturas,
-	   (SELECT TOP 1 empl_codigo FROM Empleado
+	   (SELECT TOP 1 empl_nombre FROM Empleado
 	    JOIN Factura ON fact_vendedor = empl_codigo
 		WHERE YEAR(fact_fecha) = 2012 and empl_jefe = J.empl_codigo
-		GROUP BY empl_codigo
+		GROUP BY empl_nombre
 		ORDER BY SUM(fact_total) DESC) as mejor_empleado
 FROM Empleado J
 JOIN Empleado E ON E.empl_jefe = J.empl_codigo
@@ -608,7 +608,6 @@ WHERE YEAR(F1.fact_fecha) = 2011
 GROUP BY R.rubr_id, R.rubr_detalle, MONTH(F1.fact_fecha)
 ORDER BY 4 DESC
 
-
 SELECT rubr_id, rubr_detalle, MONTH(fact_fecha) as mes, 
        COUNT(DISTINCT (fact_numero+fact_tipo+fact_sucursal))
 FROM RUBRO
@@ -635,3 +634,87 @@ JOIN Item_Factura I1 ON I1.item_producto = P1.prod_codigo
 JOIN Factura F1 ON F1.fact_numero+F1.fact_tipo+F1.fact_sucursal = I1.item_numero+I1.item_tipo+I1.item_sucursal
 GROUP BY YEAR(F1.fact_fecha),  P1.prod_codigo,  P1.prod_detalle
 ORDER BY 1, SUM(I1.item_cantidad)
+
+
+--Ejercicio de parcial del 1C2020
+--Realizar una consulta SQL que retorne el stock de los productos pero exponiendo una posible composición de sus componentes.
+--Ejemplo: Si en el stock tengo 1 hamburguesa, 1 papa y gaseosas, y suponemos que esta configuración es combo 1, el query deberá devolver Combo 1 , cantidad 1.
+--Nota: No se permiten sub select en el FROM.
+
+SELECT P1.prod_codigo, P1.prod_detalle, 
+       CASE WHEN((SELECT COUNT(*) FROM Composicion
+	              WHERE comp_producto = P1.prod_codigo)  = 0)
+	   THEN SUM(stoc_cantidad) 
+	   ELSE (SELECT TOP 1 (SUM(stoc_cantidad)/comp_cantidad) FROM Composicion
+	         JOIN STOCK ON stoc_producto = comp_componente
+	         WHERE comp_producto = P1.prod_codigo 
+		     GROUP BY comp_componente, comp_cantidad
+			 ORDER BY 1)
+	   END
+FROM Producto P1
+JOIN STOCK ON stoc_producto = P1.prod_codigo
+GROUP BY P1.prod_codigo, P1.prod_detalle
+order by P1.prod_detalle
+
+--Ejercicio de parcial del 1C2020
+--Mostrar las zonas donde menor cantidad de ventas se están realizando en el año actual. 
+--Recordar que un empleado está puesto como fact_vendedor en factura. 
+--De aquellas zonas donde menores ventas tengamos, se deberá mostrar (cantidad de clientes distintos que operan en esa zona), 
+--cantidad de clientes que aparte de ese zona, compran en otras zonas (es decir, a otros vendedores de la zona). 
+--El resultado se deberá mostrar por cantidad de productos vendidos en la zona en cuestión de manera descendiente.
+--Nota: No se puede usar select en el from.
+
+SELECT Z.zona_codigo, Z.zona_detalle, COUNT(DISTINCT F.fact_cliente),
+       (SELECT COUNT(DISTINCT clie_codigo) FROM Cliente
+	   JOIN Factura ON fact_cliente = clie_codigo
+	   JOIN Empleado ON empl_codigo = fact_vendedor
+	   JOIN Departamento ON depa_codigo = empl_departamento
+	   JOIN Zona ON zona_codigo = depa_zona
+	   WHERE zona_codigo <> Z.zona_codigo AND clie_codigo in (SELECT fact_cliente FROM Factura
+	                                                          JOIN Empleado ON empl_codigo = fact_vendedor
+	                                                          JOIN Departamento ON depa_codigo = empl_departamento
+	                                                          JOIN Zona ON zona_codigo = depa_zona
+															  WHERE zona_codigo = Z.zona_codigo))
+FROM Zona Z
+JOIN Departamento D ON D.depa_zona = Z.zona_codigo
+JOIN Empleado E ON E.empl_departamento = D.depa_codigo
+LEFT JOIN Factura F ON F.fact_vendedor = E.empl_codigo
+LEFT JOIN Item_Factura I ON I.item_numero+I.item_sucursal+I.item_tipo = F.fact_numero+F.fact_sucursal+F.fact_tipo
+GROUP BY Z.zona_detalle, Z.zona_codigo
+ORDER BY SUM(I.item_cantidad)
+
+
+--Ejercicio que me tomaron en el parcial
+--Con el fin de analizar el posicionamiento de ciertos productos se necesita mostrar solo los 5 rubros de productos más vendidos y además, 
+--por cada uno de estos rubros  saber cuál es el producto más exitoso (es decir, con más ventas) y si el mismo es “simple” o “compuesto”. 
+--Por otro lado, se pide se indique si hay “stock disponible” o si hay “faltante” para afrontar las ventas del próximo mes. 
+--Considerar que se estima que la venta aumente un 10% respecto del mes de diciembre del año pasado.
+--Armar una consulta SQL que retorne esta información.
+
+SELECT TOP 5  R.rubr_id, 
+             (SELECT SUM(item_cantidad) FROM Rubro
+             JOIN Producto ON prod_rubro = P.prod_rubro
+			 JOIN Item_Factura ON item_producto = prod_codigo) AS cant_vendida,
+             P.prod_detalle,
+			 CASE WHEN(SELECT COUNT(*) FROM Composicion WHERE comp_producto = P.prod_codigo) = 0
+			 THEN 'simple'
+			 ELSE 'compuesto'
+			 END,
+			 CASE WHEN(SELECT SUM(stoc_cantidad)* 1.1 FROM STOCK
+			           WHERE stoc_producto = prod_codigo) > (SELECT SUM(item_cantidad) FROM Item_Factura
+					                                         JOIN Factura ON fact_numero+fact_sucursal+fact_tipo = item_numero+item_sucursal+item_tipo
+															 WHERE item_producto = P.prod_codigo AND YEAR(fact_fecha) = 2012 AND MONTH(fact_fecha) = 12)
+			 THEN 'stock disponible'
+			 ELSE 'faltante'
+			 END
+FROM Rubro R 				  			  	   
+JOIN Producto P ON P.prod_rubro = R.rubr_id
+JOIN Item_Factura I ON I.item_producto = P.prod_codigo
+JOIN Factura F ON F.fact_numero+F.fact_sucursal+F.fact_tipo = I.item_numero+I.item_sucursal+I.item_tipo
+WHERE R.rubr_id in (SELECT TOP 1 rubr_detalle FROM Rubro
+                    JOIN Producto ON prod_rubro = rubr_id
+					JOIN Item_Factura ON item_producto = prod_codigo
+					GROUP BY rubr_id
+					ORDER BY SUM(item_cantidad))
+GROUP BY P.prod_rubro, P.prod_detalle, P.prod_codigo 
+ORDER BY SUM(I.item_cantidad) DESC

@@ -92,21 +92,21 @@ GO
 
 --Ejercicio 5
 Create table Fact_table(
-anio char(4) NOT NULL, --YEAR(fact_fecha)
-mes char(2) NOT NULL, --RIGHT('0' + convert(varchar(2),MONTH(fact_fecha)),2)
-familia char(3) NOT NULL,--prod_familia
-rubro char(4) NOT NULL,--prod_rubro
-zona char(3) NOT NULL,--depa_zona
-cliente char(6) NOT NULL,--fact_cliente
-producto char(8) NOT NULL,--item_producto
-cantidad decimal(12,2) NOT NULL,--item_cantidad
-monto decimal(12,2)--asumo que es item_precio debido a que es por cada producto, 
-				   --asumo tambien que el precio ya esta determinado por total y no por unidad (no debe multiplicarse por cantidad)
+anio char(4) NOT NULL,
+mes char(2) NOT NULL,
+familia char(3) NOT NULL,
+rubro char(4) NOT NULL,
+zona char(3) NOT NULL,
+cliente char(6) NOT NULL,
+producto char(8) NOT NULL,
+cantidad decimal(12,2) NOT NULL,
+monto decimal(12,2)
 )
 
 Alter table Fact_table
 Add constraint pk_Fact_table_ID primary key(anio,mes,familia,rubro,zona,cliente,producto)
 
+GO
 
 CREATE PROC dbo.Ejercicio5
 AS
@@ -184,12 +184,12 @@ GO
 
 --Ejercicio 7
 Create table Ventas(
-vent_codigo char(8) NULL, --Código del articulo
-vent_detalle char(50) NULL, --Detalle del articulo
-vent_movimientos int NULL, --Cantidad de movimientos de ventas (Item Factura)
-vent_precio_prom decimal(12,2) NULL, --Precio promedio de venta
-vent_renglon int IDENTITY(1,1) PRIMARY KEY, --Nro de linea de la tabla (PK)
-vent_ganancia char(6) NOT NULL, --Precio de venta - Cantidad * Costo Actual
+vent_codigo char(8) NULL,
+vent_detalle char(50) NULL,
+vent_movimientos int NULL,
+vent_precio_prom decimal(12,2) NULL,
+vent_renglon int IDENTITY(1,1) PRIMARY KEY,
+vent_ganancia char(6) NOT NULL
 )
 Alter table Ventas
 Add constraint pk_ventas_ID primary key(vent_renglon)
@@ -256,7 +256,7 @@ BEGIN
 	 WHILE @@FETCH_STATUS = 0
 	      BEGIN
 		       SET @precio = CASE WHEN (SELECT COUNT(*) FROM Composicion WHERE comp_producto = @codigo_comp) > 0
-			                 THEN dbo.Ejercicio11(@codigo_comp) + @precio
+			                 THEN dbo.PrecioProductoE8(@codigo_comp) + @precio
 							 ELSE (@cant_comp * @precio_comp) + @precio END
 		       FETCH NEXT FROM cComp INTO @codigo_comp, @cant_comp, @precio_comp
 		  END
@@ -291,7 +291,7 @@ BEGIN
 
 	 WHILE @@FETCH_STATUS = 0
 	      BEGIN
-		       IF((SELECT dbo.Ejercicio8(@codigo_prod)) <> @precio_facturado)
+		       IF((SELECT dbo.PrecioProductoE8(@codigo_prod)) <> @precio_facturado)
 			     BEGIN
 					  SET @detalle = (SELECT prod_detalle FROM Producto WHERE prod_codigo = @codigo_prod)
 					  SET @precio_generado = (SELECT dbo.PrecioProductoE8(@codigo_prod))
@@ -377,7 +377,7 @@ OPEN cEmpl
 FETCH NEXT FROM cEmpl INTO @empleado
 WHILE @@FETCH_STATUS = 0
      BEGIN
-	 SET @cant_empleados = @cant_empleados + dbo.Ejercicio11(@empleado) 
+	 SET @cant_empleados = @cant_empleados + dbo.CantidadEmpleadosE11(@empleado) 
 	 FETCH NEXT FROM cEmpl INTO @empleado
 	 END
 CLOSE cEmpl
@@ -442,7 +442,7 @@ BEGIN
 	   IF(SELECT COUNT(*) FROM INSERTED WHERE dbo.CompuestoPorSiMismoE12(comp_producto, comp_componente) = 1) > 0
 	      PRINT 'No puede ingresarse un producto compuesto por si mismo'
 	   ELSE
-	      INSERT Composicion SELECT * FROM INSERTED WHERE dbo.Ejercicio12(comp_producto, comp_componente) = 0
+	      INSERT Composicion SELECT * FROM INSERTED WHERE dbo.CompuestoPorSiMismoE12(comp_producto, comp_componente) = 0
 	 ELSE --SI ES UN UPDATE =>
 	     BEGIN
 		 DECLARE @productodel char(8)
@@ -542,7 +542,7 @@ BEGIN
 
 	 WHILE @@FETCH_STATUS = 0
 	 BEGIN
-	      IF(@precio_item > dbo.precioProducto15(@prod_item) / 2)
+	      IF(@precio_item > dbo.PrecioProductoE8(@prod_item) / 2)
 		    BEGIN
 			     INSERT Item_Factura VALUES(@tipo_item, @suc_item, @num_item, @prod_item, @cant_item, @precio_item)
 				 SELECT @fecha=fact_fecha, @cliente = fact_cliente FROM Factura WHERE fact_numero+fact_sucursal+fact_tipo = @tipo_item+@suc_item+@num_item
@@ -692,31 +692,134 @@ GO
 CREATE TRIGGER ComisionesActualizadasE20 ON Factura FOR INSERT
 AS
 BEGIN
-     DECLARE @codigo_empl numeric(6,0)
-	 DECLARE @comision decimal(12,2)
-	 DECLARE @cant_item int
-	 DECLARE cEmpl CURSOR FOR SELECT I.fact_vendedor, SUM(Ifact.item_cantidad * Ifact.item_precio) *0.05, COUNT(DISTINCT Ifact.item_precio) FROM INSERTED I
-	                          JOIN Item_Factura Ifact ON Ifact.item_numero + Ifact.item_sucursal + Ifact.item_tipo = I.fact_numero + I.fact_sucursal + I.fact_tipo
-							  GROUP BY I.fact_vendedor
-							  
-	 OPEN cEmpl
-	 FETCH NEXT FROM cEmpl INTO @codigo_empl, @comision, @cant_item 
+     UPDATE Empleado SET empl_comision = (SELECT SUM(fact_total)*0.05 FROM Factura WHERE MONTH(fact_fecha) = MONTH(getdate()) AND fact_vendedor = empl_codigo) * 
+	                                      CASE WHEN(SELECT COUNT(*) FROM Factura WHERE MONTH(fact_fecha) = MONTH(getdate()) AND fact_vendedor = empl_codigo ) > 50
+										  THEN 1.3
+										  ELSE 1
+										  END
+	        WHERE empl_codigo in (SELECT I.fact_vendedor FROM INSERTED I)
+END
+
+GO
+
+--Ejercicio 21
+--TRIGER sobre Factura.. 
+
+--Ejercicio 22
+CREATE PROC RecategorizarRubrosE20
+AS
+BEGIN
+     DECLARE cRubro CURSOR FOR SELECT rubr_id, COUNT(DISTINCT prod_codigo)  FROM Rubro
+	                           JOIN Producto ON prod_rubro = rubr_id
+							   GROUP BY rubr_id
+							   HAVING COUNT(DISTINCT prod_codigo) > 20
+	 DECLARE @rubro char(4)
+	 DECLARE @cant_prod int
+
+	 OPEN cRubro 
+	 FETCH NEXT FROM cRubro INTO @rubro, @cant_prod
 
 	 WHILE @@FETCH_STATUS = 0
 	      BEGIN
-		       SET @comision = @comision + (SELECT SUM(Ifact.item_cantidad * Ifact.item_precio) FROM Factura F
-                                            JOIN Item_Factura Ifact ON Ifact.item_numero + Ifact.item_sucursal + Ifact.item_tipo = F.fact_numero + F.fact_sucursal + F.fact_tipo
-											WHERE F.fact_vendedor = @codigo_empl and MONTH(getdate()) = MONTH(F.fact_fecha))
-                
-			    IF(SELECT COUNT(DISTINCT Ifact.item_producto) FROM Factura F
-                   JOIN Item_Factura Ifact ON Ifact.item_numero + Ifact.item_sucursal + Ifact.item_tipo = F.fact_numero + F.fact_sucursal + F.fact_tipo
-				   WHERE F.fact_vendedor = @codigo_empl and MONTH(getdate()) = MONTH(F.fact_fecha) + @cant_item) >= 50
-				   SET @comision = @comision * 1.3
-			   
-			    UPDATE Empleado SET empl_comision = @comision WHERE empl_codigo = @codigo_empl
+		       
+			   WHILE @cant_prod > 20
+			        BEGIN
+					     IF(SELECT COUNT(*) rubr_id FROM Rubro
+	                        JOIN Producto ON prod_rubro = rubr_id
+							GROUP BY rubr_id
+							HAVING COUNT(DISTINCT prod_codigo) < 20) > 0
+							
+						    UPDATE Producto SET prod_rubro = (SELECT TOP 1 rubr_id FROM Rubro
+	                                                         JOIN Producto ON prod_rubro = rubr_id
+							                                 GROUP BY rubr_id
+							                                 HAVING COUNT(DISTINCT prod_codigo) < 20)
+						 ELSE
+						     UPDATE Producto SET prod_rubro = 0
 
-				FETCH NEXT FROM cEmpl INTO @codigo_empl, @comision, @cant_item 
+						 SET @cant_prod = @cant_prod -1
+					END
+			   FETCH NEXT FROM cRubro INTO @rubro, @cant_prod
 		  END
-	 CLOSE cEmpl
-	 DEALLOCATE cEmpl
+
+	CLOSE cRubro
+	DEALLOCATE cRubro
+END
+
+GO
+
+--Ejercicio 23
+--TRIGER sobre factura..
+
+--Ejercicio 24
+CREATE PROC RecategorizarEncargadosDepoE24 
+AS
+BEGIN
+     DECLARE cDepo CURSOR FOR SELECT depo_codigo, depo_zona, depo_encargado FROM DEPOSITO
+	 DECLARE @codigo_depo char(2)
+	 DECLARE @zona_depo char(3)
+	 DECLARE @encargado numeric(6)
+
+	 OPEN cDepo
+	 FETCH NEXT FROM cDepo INTO @codigo_depo, @zona_depo, @encargado
+
+	 WHILE @@FETCH_STATUS = 0
+	 BEGIN
+	      IF @zona_depo <> (SELECT depa_zona FROM Empleado
+		                   JOIN Departamento ON depa_codigo = empl_departamento
+						   WHERE empl_codigo = @encargado)
+		   BEGIN
+		        UPDATE DEPOSITO SET depo_encargado = (SELECT TOP 1 depo_encargado FROM DEPOSITO
+													  WHERE depo_zona = @zona_depo
+													  GROUP BY depo_encargado
+													  ORDER BY COUNT(DISTINCT depo_codigo))
+		               WHERE depo_codigo = @codigo_depo
+		   END
+		   FETCH NEXT FROM cDepo INTO @codigo_depo, @zona_depo, @encargado
+	 END
+	 CLOSE cDepo
+	 DEALLOCATE cDepo
+
+END
+
+GO
+
+--Ejercicio que me tomaron en el parcial
+--Para estimar que STOCK se necesita comprar de cada producto, se toma como estimación las ventas de unidades promedio de los últimos 3 meses anteriores a una fecha. 
+--Se solicita que se guarde en una tabla (producto, cantidad a reponer) en función del criterio antes mencionado.
+
+CREATE Table Reposicion(
+codigo_prod char(8) NOT NULL,
+cant int NOT NULL
+)
+
+Alter table Reposicion
+Add constraint pk_Reposicion_ID primary key(codigo_prod)
+
+GO
+
+CREATE PROC Repo(@fecha smalldatetime)
+AS
+BEGIN
+     DECLARE cProd CURSOR FOR SELECT prod_codigo, AVG(item_cantidad) FROM Producto
+	                          JOIN Item_Factura ON prod_codigo = item_producto
+							  JOIN Factura ON fact_numero+fact_sucursal+fact_tipo = item_numero+item_sucursal+item_tipo
+							  WHERE YEAR(fact_fecha) = YEAR(@fecha) AND MONTH(fact_fecha) = MONTH(@fecha) 
+							       AND  MONTH(fact_fecha) = MONTH(@fecha) - 1 AND MONTH(fact_fecha) = MONTH(@fecha) - 2
+							  GROUP BY prod_codigo
+	 DECLARE @prod char(8)
+	 DECLARE @cant int
+
+	 OPEN cProd
+	 FETCH NEXT FROM cProd INTO @prod, @cant
+
+	 WHILE @@FETCH_STATUS = 0
+	 BEGIN
+	      INSERT INTO Reposicion(codigo_prod, cant)
+		         SELECT @prod, @cant
+
+	      FETCH NEXT FROM cProd INTO @prod, @cant
+	 END
+
+	 CLOSE cProd
+	 DEALLOCATE cProd
 END
